@@ -1,22 +1,24 @@
-
 #!/bin/bash
-clear
-echo "=============================="
-echo "        Selamat Datang        "
-echo "=============================="
-echo "Ketik 'I' Untuk VPS Non-Lokal"
-echo "Ketik 'L' Untuk VPS Lokal" 
-echo "=============================="
-read -p "Location : " -e loc
-yum update -y
+
+# initialisasi var
+OS=`uname -p`;
+ether=`ifconfig | cut -c 1-8 | sort | uniq -u | grep venet0 | grep -v venet0:`
+if [ "$ether" = "" ]; then
+        ether=eth0
+fi
+#ether='ifconfig -a | sed 's/[ \t].*//;/^\(lo\|\)$/d' | grep -v venet0:';
+MYIP=`curl -s ifconfig.me`;
+MYIP2="s/xxxxxxxxx/$MYIP/g";
 
 # go to root
 cd
 
-# remove unused
-yum -y remove sendmail;
-yum -y remove httpd;
-yum -y remove cyrus-sasl
+# set time GMT +7
+ln -fs /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
+
+# set locale
+sed -i 's/AcceptEnv/#AcceptEnv/g' /etc/ssh/sshd_config
+service sshd restart
 
 # disable ipv6
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
@@ -26,70 +28,63 @@ sed -i '$ i\echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6' /etc/rc.d/rc.loca
 # install wget and curl
 yum -y install wget curl
 
-# set time GMT +7
-ln -fs /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
-
-# set locale
-sed -i 's/AcceptEnv/#AcceptEnv/g' /etc/ssh/sshd_config
-service sshd restart
-
 # setting repo
 wget http://dl.fedoraproject.org/pub/epel/6/i386/epel-release-6-8.noarch.rpm
 wget http://rpms.famillecollet.com/enterprise/remi-release-6.rpm
 rpm -Uvh epel-release-6-8.noarch.rpm
 rpm -Uvh remi-release-6.rpm
+
+if [ "$OS" == "x86_64" ]; then
+  wget http://pkgs.repoforge.org/rpmforge-release/rpmforge-release-0.5.3-1.el6.rf.x86_64.rpm
+  rpm -Uvh rpmforge-release-0.5.3-1.el6.rf.x86_64.rpm
+else
+  wget http://pkgs.repoforge.org/rpmforge-release/rpmforge-release-0.5.3-1.el6.rf.i686.rpm
+  rpm -Uvh rpmforge-release-0.5.3-1.el6.rf.i686.rpm
+fi
+
+sed -i 's/enabled = 1/enabled = 0/g' /etc/yum.repos.d/rpmforge.repo
 sed -i -e "/^\[remi\]/,/^\[.*\]/ s|^\(enabled[ \t]*=[ \t]*0\\)|enabled=1|" /etc/yum.repos.d/remi.repo
 rm -f *.rpm
 
-# --------- Mirror Repo --------------
-# wget http://script.hostingtermurah.net/repo/autoscript/centos6/epel-release-6-8.noarch.rpm
-# wget http://script.hostingtermurah.net/repo/autoscript/centos6/remi-release-6.rpm
-# rpm -Uvh epel-release-6-8.noarch.rpm
-# rpm -Uvh remi-release-6.rpm
-# if [ "$OS" == "x86_64" ]; then
-  # wget http://script.hostingtermurah.net/repo/autoscript/centos6/rpmforge-release-0.5.3-1.el6.rf.x86_64.rpm
-  # rpm -Uvh rpmforge-release-0.5.3-1.el6.rf.x86_64.rpm
-# else
-  # wget http://script.hostingtermurah.net/repo/autoscript/centos6/rpmforge-release-0.5.3-1.el6.rf.i686.rpm
-  # rpm -Uvh rpmforge-release-0.5.3-1.el6.rf.i686.rpm
-# fi
-# sed -i -e "/^\[remi\]/,/^\[.*\]/ s|^\(enabled[ \t]*=[ \t]*0\\)|enabled=1|" /etc/yum.repos.d/remi.repo
-# rm -f *.rpm
+# remove unused
+yum -y remove sendmail;
+yum -y remove httpd;
+yum -y remove cyrus-sasl;
 
 # update
-yum update -y
+yum -y update
 
-# Install Essential Package
-yum -y install wondershaper rrdtool screen iftop htop nmap bc nethogs openvpn vnstat ngrep mtr git zsh mrtg unrar rsyslog rkhunter mrtg net-snmp net-snmp-utils expect nano bind-utils
+# install webserver
+yum -y install nginx php-fpm php-cli
+service nginx restart
+service php-fpm restart
+chkconfig nginx on
+chkconfig php-fpm on
+
+# install essential package
+yum -y install iftop htop nmap bc nethogs openvpn vnstat ngrep mtr git zsh mrtg unrar rsyslog rkhunter mrtg net-snmp net-snmp-utils expect nano bind-utils
 yum -y groupinstall 'Development Tools'
 yum -y install cmake
-yum -y --enablerepo=rpmforge install axel sslh ptunnel unrar
 
-# Install Webmin
-yum update && yum groupinstall "Development Tools"
-wget http://prdownloads.sourceforge.net/webadmin/webmin-1.770-1.noarch.rpm
-yum -y install perl perl-Net-SSLeay openssl perl-IO-Tty
-rpm -U webmin-1.770-1.noarch.rpm && chkconfig webmin on
-chkconfig webmin on
-sed -i 's/ssl=1/ssl=0/g' /etc/webmin/miniserv.conf
-service webmin restart
+# matiin exim
+service exim stop
+chkconfig exim off
 
-# OpenSSH Setting
-sed -i '/#Port 22/a Port 22' /etc/ssh/sshd_config
-sed -i '/Port 22/a Port 143' /etc/ssh/sshd_config
-sed -i 's/Port 22/Port 22/g' /etc/ssh/sshd_config
-service sshd restart
+# setting vnstat
+vnstat -u -i $ether
+echo "MAILTO=root" > /etc/cron.d/vnstat
+echo "*/5 * * * * root /usr/sbin/vnstat.cron" >> /etc/cron.d/vnstat
+sed -i "s/eth0/$ether/" /etc/sysconfig/vnstat
+service vnstat restart
+chkconfig vnstat on
 
-# Install Dropbear
-yum -y install dropbear
-echo "OPTIONS=\"-p 109 -p 110 -p 443 -p 999\"" > /etc/sysconfig/dropbear
-echo "/bin/false" >> /etc/shells
-echo "/usr/sbin/nologin" >> /etc/shells
-service ssh restart
-service dropbear restart
+# install screenfetch
 cd
-
-chkconfig dropbear on
+wget https://github.com/KittyKatt/screenFetch/raw/master/screenfetch-dev
+mv screenfetch-dev /usr/bin/screenfetch
+chmod +x /usr/bin/screenfetch
+echo "clear" >> .bash_profile
+echo "screenfetch" >> .bash_profile
 
 # Install Webserver Port 81
 yum install nginx php libapache2-mod-php php-fpm php-cli php-mysql php-mcrypt libxml-parser-perl -y
@@ -109,33 +104,75 @@ chkconfig php-fpm on
 chkconfig nginx on
 cd
 
-# install openvpn
-wget -O /etc/openvpn/openvpn.tar "https://raw.github.com/yurisshOS/debian7/master/openvpn-debian.tar"
-cd /etc/openvpn/
-tar xf openvpn.tar
-wget -O /etc/openvpn/1194.conf "https://raw.github.com/yurisshOS/centos6/master/vps.conf"
-if [ "$OS" == "x86_64" ]; then
-  wget -O /etc/openvpn/1194.conf "https://raw.github.com/yurisshOS/centos6/master/1194-centos64.conf"
-fi
-wget -O /etc/iptables.up.rules "https://raw.github.com/yurisshOS/centos6/master/iptables.up.rules"
-sed -i '$ i\iptables-restore < /etc/iptables.up.rules' /etc/rc.local
-sed -i '$ i\iptables-restore < /etc/iptables.up.rules' /etc/rc.d/rc.local
-sed -i $MYIP2 /etc/iptables.up.rules;
-iptables-restore < /etc/iptables.up.rules
-sysctl -w net.ipv4.ip_forward=1
-sed -i 's/net.ipv4.ip_forward = 0/net.ipv4.ip_forward = 1/g' /etc/sysctl.conf
-service openvpn restart
-chkconfig openvpn on
+# OpenSSH Setting
+sed -i '/#Port 22/a Port 22' /etc/ssh/sshd_config
+sed -i '/Port 22/a Port 143' /etc/ssh/sshd_config
+sed -i 's/Port 22/Port 22/g' /etc/ssh/sshd_config
+service sshd restart
+
+# Install Dropbear
+yum -y install dropbear
+echo "OPTIONS=\"-p 109 -p 110 -p 443 -p 999\"" > /etc/sysconfig/dropbear
+echo "/bin/false" >> /etc/shells
+echo "/usr/sbin/nologin" >> /etc/shells
+service ssh restart
+service dropbear restart
 cd
+
+chkconfig dropbear on
+
+# install openvpn
+cd /etc/openvpn/
+wget --no-check-certificate -O ~/easy-rsa.tar.gz https://github.com/OpenVPN/easy-rsa/archive/2.2.2.tar.gz
+tar xzf ~/easy-rsa.tar.gz -C ~/
+mkdir -p /etc/openvpn/easy-rsa/2.0/
+cp ~/easy-rsa-2.2.2/easy-rsa/2.0/* /etc/openvpn/easy-rsa/2.0/
+rm -rf ~/easy-rsa-2.2.2
+
+cd /etc/openvpn/easy-rsa/2.0/
+cp -u -p openssl-1.0.0.cnf openssl.cnf
+sed -i 's|export KEY_SIZE=1024|export KEY_SIZE=2048|' /etc/openvpn/easy-rsa/2.0/vars
+. /etc/openvpn/easy-rsa/2.0/vars
+. /etc/openvpn/easy-rsa/2.0/clean-all
+export EASY_RSA="${EASY_RSA:-.}"
+"$EASY_RSA/pkitool" --initca $*
+export EASY_RSA="${EASY_RSA:-.}"
+"$EASY_RSA/pkitool" --server server
+export KEY_CN="$CLIENT"
+export EASY_RSA="${EASY_RSA:-.}"
+"$EASY_RSA/pkitool" $CLIENT
+. /etc/openvpn/easy-rsa/2.0/build-dh
+
+
+wget -O /etc/openvpn/1194.conf "https://github.com/ardi85/autoscript/raw/master/1194-centos.conf"
+service openvpn restart
+sysctl -w net.ipv4.ip_forward=1
+sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/g' /etc/sysctl.conf
+sed -i 's/net.ipv4.ip_forward = 0/net.ipv4.ip_forward=1/g' /etc/sysctl.conf
+
+if [ $(ifconfig | cut -c 1-8 | sort | uniq -u | grep venet0 | grep -v venet0:) = "venet0" ];then
+      iptables -t nat -A POSTROUTING -o venet0 -j SNAT --to-source $MYIP
+else
+      iptables -t nat -A POSTROUTING -s 192.168.100.0/24 -o eth0 -j MASQUERADE
+fi
+
+#wget -O /etc/iptables.up.rules "https://raw.github.com/yurisshOS/debian7/master/iptables.up.rules"
+#sed -i '$ i\iptables-restore < /etc/iptables.up.rules' /etc/rc.local
+#sed -i $MYIP2 /etc/iptables.up.rules;
+#iptables-restore < /etc/iptables.up.rules
+service iptables save
+service iptables restart
+chkconfig iptables on
+service openvpn restart
 
 # configure openvpn client config
 cd /etc/openvpn/
-wget -O /etc/openvpn/1194-client.ovpn "https://raw.github.com/yurisshOS/centos6/master/1194-client.conf"
+wget -O /etc/openvpn/1194-client.ovpn "https://github.com/ardi85/autoscript/raw/master/1194-client.conf"
 sed -i $MYIP2 /etc/openvpn/1194-client.ovpn;
-PASS=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 15 | head -n 1`;
-useradd -M -s /bin/false YurisshOS
-echo "YurisshOS:$PASS" | chpasswd
-echo "username" > pass.txt
+echo "<ca>" >> /etc/openvpn/1194-client.ovpn
+cat /etc/openvpn/easy-rsa/2.0/keys/ca.crt >> /etc/openvpn/1194-client.ovpn
+echo -e "</ca>\n" >> /etc/openvpn/1194-client.ovpn
+echo "username" >> pass.txt
 echo "password" >> pass.txt
 tar cf client.tar 1194-client.ovpn pass.txt
 cp client.tar /home/vps/public_html/
