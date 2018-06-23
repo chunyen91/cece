@@ -122,61 +122,39 @@ cd
 chkconfig dropbear on
 
 # install openvpn
+wget -O /etc/openvpn/openvpn.tar "https://raw.githubusercontent.com/adammau2/script-vps/master/conf/openvpn-debian.tar"
 cd /etc/openvpn/
-wget --no-check-certificate -O ~/easy-rsa.tar.gz https://github.com/OpenVPN/easy-rsa/archive/2.2.2.tar.gz
-tar xzf ~/easy-rsa.tar.gz -C ~/
-mkdir -p /etc/openvpn/easy-rsa/2.0/
-cp ~/easy-rsa-2.2.2/easy-rsa/2.0/* /etc/openvpn/easy-rsa/2.0/
-rm -rf ~/easy-rsa-2.2.2
-
-cd /etc/openvpn/easy-rsa/2.0/
-cp -u -p openssl-1.0.0.cnf openssl.cnf
-sed -i 's|export KEY_SIZE=1024|export KEY_SIZE=2048|' /etc/openvpn/easy-rsa/2.0/vars
-. /etc/openvpn/easy-rsa/2.0/vars
-. /etc/openvpn/easy-rsa/2.0/clean-all
-export EASY_RSA="${EASY_RSA:-.}"
-"$EASY_RSA/pkitool" --initca $*
-export EASY_RSA="${EASY_RSA:-.}"
-"$EASY_RSA/pkitool" --server server
-export KEY_CN="$CLIENT"
-export EASY_RSA="${EASY_RSA:-.}"
-"$EASY_RSA/pkitool" $CLIENT
-. /etc/openvpn/easy-rsa/2.0/build-dh
-
-
-wget -O /etc/openvpn/1194.conf "https://github.com/ardi85/autoscript/raw/master/1194-centos.conf"
-service openvpn restart
-sysctl -w net.ipv4.ip_forward=1
-sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/g' /etc/sysctl.conf
-sed -i 's/net.ipv4.ip_forward = 0/net.ipv4.ip_forward=1/g' /etc/sysctl.conf
-
-if [ $(ifconfig | cut -c 1-8 | sort | uniq -u | grep venet0 | grep -v venet0:) = "venet0" ];then
-      iptables -t nat -A POSTROUTING -o venet0 -j SNAT --to-source $MYIP
-else
-      iptables -t nat -A POSTROUTING -s 192.168.100.0/24 -o eth0 -j MASQUERADE
+tar xf openvpn.tar
+wget -O /etc/openvpn/1194.conf "https://raw.githubusercontent.com/adammau2/script-vps/master/conf/1194-centos.conf"
+if [ "$OS" == "x86_64" ]; then
+  wget -O /etc/openvpn/1194.conf "https://raw.githubusercontent.com/adammau2/script-vps/master/conf/1194-centos64.conf"
 fi
-
-#wget -O /etc/iptables.up.rules "https://raw.github.com/yurisshOS/debian7/master/iptables.up.rules"
-#sed -i '$ i\iptables-restore < /etc/iptables.up.rules' /etc/rc.local
-#sed -i $MYIP2 /etc/iptables.up.rules;
-#iptables-restore < /etc/iptables.up.rules
-service iptables save
-service iptables restart
-chkconfig iptables on
+wget -O /etc/iptables.up.rules "https://raw.githubusercontent.com/adammau2/script-vps/master/conf/iptables.up.rules"
+sed -i '$ i\iptables-restore < /etc/iptables.up.rules' /etc/rc.local
+sed -i '$ i\iptables-restore < /etc/iptables.up.rules' /etc/rc.d/rc.local
+MYIP=`curl icanhazip.com`;
+MYIP2="s/xxxxxxxxx/$MYIP/g";
+sed -i $MYIP2 /etc/iptables.up.rules;
+sed -i 's/venet0/eth0/g' /etc/iptables.up.rules
+iptables-restore < /etc/iptables.up.rules
+sysctl -w net.ipv4.ip_forward=1
+sed -i 's/net.ipv4.ip_forward = 0/net.ipv4.ip_forward = 1/g' /etc/sysctl.conf
 service openvpn restart
+chkconfig openvpn on
+cd
 
 # configure openvpn client config
 cd /etc/openvpn/
-wget -O /etc/openvpn/1194-client.ovpn "https://github.com/ardi85/autoscript/raw/master/1194-client.conf"
+wget -O /etc/openvpn/1194-client.ovpn "https://raw.githubusercontent.com/adammau2/script-vps/master/openvpn.conf"
 sed -i $MYIP2 /etc/openvpn/1194-client.ovpn;
-echo "<ca>" >> /etc/openvpn/1194-client.ovpn
-cat /etc/openvpn/easy-rsa/2.0/keys/ca.crt >> /etc/openvpn/1194-client.ovpn
-echo -e "</ca>\n" >> /etc/openvpn/1194-client.ovpn
-echo "username" >> pass.txt
-echo "password" >> pass.txt
+PASS=`cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 15 | head -n 1`;
+useradd -M -s /bin/false Adam
+echo "Adam:$PASS" | chpasswd
+echo "Adam" > pass.txt
+echo "$PASS" >> pass.txt
 tar cf client.tar 1194-client.ovpn pass.txt
 cp client.tar /home/vps/public_html/
-cd
+cp 1194-client.ovpn /home/vps/public_html/
 
 # Install VNSTAT
 yum install vnstat -y
